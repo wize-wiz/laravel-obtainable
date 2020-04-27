@@ -1,0 +1,38 @@
+{
+  "version": "0.1",
+  "name": "wize-wiz/laravel-obtainable",
+  "description": "Simple Laravel cache management for repeating code structures using caches.",
+  "type": "library",
+  "authors": [
+    {
+      "name": "wize-wiz",
+      "email": "wize-wiz@git.wizdom.de"
+    }
+  ],
+  "require": {
+    "php": "^7.2"
+  },
+  "license": "MIT",
+  "autoload": {
+    "psr-4": {
+      "WizeWiz\\Obtainable\\": "src"
+    }
+  },
+  "autoload-dev": {
+    "psr-4": {
+      "WizeWiz\\Obtainable\\Tests\\": "tests"
+    }
+  },
+  "extra": {
+    "laravel": {
+      "providers": [
+        "WizeWiz\\Obtainable\\ObtainableServiceProvider"
+      ]
+    }
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "minimum-stability": "dev",
+  "prefer-stable": true
+}
