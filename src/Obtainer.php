@@ -4,10 +4,13 @@ namespace WizeWiz\Obtainable;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Str;
 
 abstract class Obtainer {
 
     const OBTAINER_PREFIX = 'obt';
+
+    public static $namespace;
 
     public $prefix = null;
     public $ttl = 3600;
@@ -19,6 +22,8 @@ abstract class Obtainer {
     protected $casts = [];
 
     /**
+     * Camel call of any key, e.g. `this-is-an-obtainable` will call thisIsAObtainable.
+     *
      * @param $name
      * @param $arguments
      * @return mixed
@@ -39,8 +44,13 @@ abstract class Obtainer {
      * @return mixed
      */
     public static function create(string $class) {
+        if(Obtainer::$namespace === null) {
+            $namespace = config('obtainable.namespace');
+            Obtainer::$namespace = Str::endsWith($namespace, '\\') ? $namespace : $namespace . '\\';
+        }
         // find obtainable
-        $obt_class = 'App\Obtainables\\'.last(explode('\\', $class));
+        // @todo: sub-directories aren't possible this way.
+        $obt_class = Obtainer::$namespace.last(explode('\\', $class));
         if(!class_exists($obt_class)) {
             throw new Exception("obtainable class {$obt_class} could not be found.");
         }
@@ -66,6 +76,8 @@ abstract class Obtainer {
     }
 
     /**
+     * Flush all obtainables.
+     *
      * @return bool
      */
     public function flushAll() {
