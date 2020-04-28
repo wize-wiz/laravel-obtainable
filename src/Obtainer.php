@@ -9,8 +9,10 @@ use Illuminate\Support\Str;
 abstract class Obtainer {
 
     const OBTAINER_PREFIX = 'obt';
+    const OBTAINER_TAG = 'ww:obt';
 
     public static $namespace;
+    public static $models;
 
     public $prefix = null;
     public $ttl = 3600;
@@ -20,6 +22,21 @@ abstract class Obtainer {
     protected $key_map = [];
     protected $ttl_map = [];
     protected $casts = [];
+
+    public function __construct() {
+        if(static::$namespace === null) {
+            static::initialize();
+        }
+    }
+
+    /**
+     * Initializ static variables.
+     */
+    protected static function initialize() {
+        $config = config('obtainable');
+        static::$models = Str::endsWith($config['models'], '\\') ? str_replace('\\', '', $config['models']) : $config['models'];
+        static::$namespace = Str::endsWith($config['namespace'], '\\') ? str_replace('\\', '', $config['namespace']) : $config['namespace'];
+    }
 
     /**
      * Camel call of any key, e.g. `this-is-an-obtainable` will call thisIsAObtainable.
@@ -41,21 +58,26 @@ abstract class Obtainer {
      * Create a obtainable instance given by class (model).
      *
      * @param string $class
-     * @return mixed
+     * @return Obtainer
      */
     public static function create(string $class) {
-        if(Obtainer::$namespace === null) {
-            $namespace = config('obtainable.namespace');
-            Obtainer::$namespace = Str::endsWith($namespace, '\\') ? $namespace : $namespace . '\\';
+        if(static::$namespace === null) {
+            static::initialize();
         }
         // find obtainable
-        // @todo: sub-directories aren't possible this way.
-        $obt_class = Obtainer::$namespace.last(explode('\\', $class));
+        $obt_class = static::$namespace.str_replace(static::$models, '', $class);
         if(!class_exists($obt_class)) {
-            throw new Exception("obtainable class {$obt_class} could not be found.");
+            throw new \Exception("obtainable class {$obt_class} could not be found.");
         }
         // create obtainable object, get method, check mapped key and filter key.
         return new $obt_class;
+    }
+
+    /**
+     * Purge all obtainable entries.
+     */
+    public static function purge() {
+        return Cache::tags(self::OBTAINER_TAG)->flush();
     }
 
     /**
@@ -135,12 +157,18 @@ abstract class Obtainer {
     public function getTags(string $key) : array {
         $prefix = $this->getTagPrefix();
         return [
+            // global obtainer tag
+            static::OBTAINER_TAG,
+            // obtainer specific tag
             "{$prefix}",
+            // key specific tag
             $this->getTag($key, $prefix)
         ];
     }
 
     /**
+     * Get the tag attached for a key.
+     *
      * @param $key
      * @return string
      */
@@ -150,6 +178,7 @@ abstract class Obtainer {
 
     /**
      * Process the results.
+     *
      * @param string $key
      * @param $results
      */
@@ -188,9 +217,12 @@ abstract class Obtainer {
      * @throws \Exception
      */
     protected function executeCallable(array $callable) {
-        list($method, $args) = $callable;
+        list($method, $args, $instance) = $callable;
         $closure = $this->{$method}();
         if(is_callable($closure)) {
+            if(is_object($instance)) {
+                $closure = $closure->bindTo($instance);
+            }
             return $closure($args);
         }
         throw new \Exception(static::class . '@' . " {$method} should return a callable.");
@@ -235,7 +267,7 @@ abstract class Obtainer {
      * Get TTL.
      *
      * @param $key
-     * @return int
+     * @return int Time to live in seconds.
      */
     public function getTtl($key) : int {
         return array_key_exists($key, $this->ttl_map) ?
