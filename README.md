@@ -98,8 +98,8 @@ class User extends Obtainer {
 	 * Return all unread messages.
 	 */
     public function unreadMessages() {
-        return function($ids) {
-            return User::find($ids['id'])->unread_messages;
+        return function($options) {
+            return User::find($options['id'])->unread_messages;
         }
     }
 
@@ -107,8 +107,8 @@ class User extends Obtainer {
 	 * Return the cound of all unread messages.
 	 */
     public function unreadMessagesCount() {
-        return function($ids) {
-            return User::find($ids['id'])->unread_messages->count();
+        return function($options) {
+            return User::find($options['id'])->unread_messages->count();
         }
     }
 
@@ -142,12 +142,12 @@ Where the obtainable method for `unread-chat-messages` could look like:
 class User extends Obtainer {
 
     public function unreadChatMessages() {
-        return function($ids) {
+        return function($options) {
             // psuedo chat class
             return Chat::with('messages')
                     ->whereIsNull('messages.unread_at')
-                    ->where('messages.user_id', $ids['id'])
-                    ->where('messages.chat_id', $ids['chat']);
+                    ->where('messages.user_id', $options['id'])
+                    ->where('messages.chat_id', $options['chat']);
         }
     }
 
@@ -198,7 +198,7 @@ class User extends Obtainer {
 ```
 
 If key mapping is not used for an obtainable key, in this example `unread-chat-messages`, the `Obtainer` class will
-generate a cache key according to the supplied arguments `$ids`, for example:
+generate a cache key according to the supplied arguments `$options`, for example:
 
 `chat:unread-chat-messages:chat:12:chat:582`.
 
@@ -214,11 +214,15 @@ class User extends Obtainer {
     ]
 
 	public function unreadChatMessages() {
-		// ...	
+		return function($options) {
+			// ..
+		};
 	}
 	
 	public function unreadChatMessagesCount() {
-		// ...
+		return function($options) {
+			// ..
+		};
 	}
 
 }
@@ -246,7 +250,9 @@ class User extends Obtainer {
    public $prefix = 'user';
 
 	public function unreadChatMessages() {
-		// ...	
+		return function($options) {
+			// ..
+		};
 	}
 	
 }
@@ -264,6 +270,39 @@ User::find(1)->obtain('unread-chat-messages')
 	'obt:user:unread-chat-messages'
 ]
 ```
+
+</br>
+
+### Casting.
+
+Deu to the fact that all values stored in a cache are string based, casting can be applied for each obtainable key:
+
+```php
+namespace App\Obtainables;
+
+use WizeWiz\Obtainable\Obtainer;
+
+// Obtainer class for model User.
+class User extends Obtainer {
+
+	protected $casts = [
+		'unread-chat-messages-count' => 'integer'
+	];	
+	
+	public function unreadChatMessagesCount() {
+		return function() {
+			// psuedo relationship
+			return $this
+				->chats()
+				->whereNull('read')
+				->count();
+		}
+	}
+	
+}
+```
+
+Now `$User->obtain('unread-chat-messages-count')` will always return an integer. Only the types supported with PHP's [settype](https://www.php.net/manual/en/function.settype.php). Additional any timestamp will be converted to a datetime.
 
 </br>
 

@@ -16,7 +16,7 @@ abstract class Obtainer {
 
     public $prefix = null;
     public $ttl = 3600;
-    public $silent = false;
+    public $silent = true;
     public $use_cache = true;
 
     protected $key_map = [];
@@ -51,7 +51,7 @@ abstract class Obtainer {
             $result = call_user_func_array([$this, $name], $arguments);
             return call_user_func_array([$this, 'obtain'], $result);
         }
-        throw new \Exception('unknown obtainable method ' . $name);
+        throw new \Exception('Unknown obtainable method ' . $name);
     }
 
     /**
@@ -232,15 +232,15 @@ abstract class Obtainer {
      * Filter obtainable key to generated the possible cached key.
      *
      * @param string $key
-     * @param array $ids
+     * @param array $options
      * @return string
      */
-    public function filterObtainableKey(string $key, array $ids = []) {
-        $ids_keys = array_keys($ids);
-        array_walk_recursive($ids_keys, function(&$item) {
+    public function filterObtainableKey(string $key, array $options = []) {
+        $options_keys = array_keys($options);
+        array_walk_recursive($options_keys, function(&$item) {
             $item = "\${$item}";
         });
-        return strtr($key, array_combine($ids_keys, $ids));
+        return strtr($key, array_combine($options_keys, $options));
     }
 
     /**
@@ -259,8 +259,12 @@ abstract class Obtainer {
      * @param $key
      * @return string
      */
-    public function keyMap($key) : string {
-        return (!empty($this->prefix) ? ($this->prefix . ':') : ''). $this->key_map[$key];
+    public function keyMap($key, array $args) : string {
+        $prefix = (!empty($this->prefix) ? ($this->prefix . ':') : '');
+        $mapped_key = $this->keyIsMapped($key) ?
+            $this->key_map($key) :
+            $key;
+        return $prefix . $mapped_key;
     }
 
     /**

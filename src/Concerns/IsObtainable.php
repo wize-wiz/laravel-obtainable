@@ -11,33 +11,36 @@ trait IsObtainable {
      * Obtain data.
      *
      * @param string $key
-     * @param array $ids
+     * @param array $options
      * @param bool $use_cache
      * @return \Illuminate\Contracts\Cache\Repository|mixed
      * @throws \Psr\SimpleCache\InvalidArgumentException
      */
-    public function obtain(string $key, array $ids = [], $use_cache = true) {
-        $ids['id'] = $this->id;
-        return static::obtainable($key, $ids, $use_cache, $this);
+    public function obtain(string $key, array $options = [], $use_cache = true) {
+        $options['id'] = $this->id;
+        return static::obtainable($key, $options, $use_cache, $this);
     }
 
     /**
      * Obtain data statically.
      *
      * @param string $key
-     * @param array $ids
+     * @param array $options
      * @param bool $use_cache
      * @param null $obtainable_instance
      * @return \Illuminate\Contracts\Cache\Repository|mixed
      * @throws \Psr\SimpleCache\InvalidArgumentException
      */
-    public static function obtainable(string $key, array $ids = [], $use_cache = true, $obtainable_instance = null) {
+    public static function obtainable(string $key, array $options = [], $use_cache = true, $obtainable_instance = null) {
         $obtainable = Obtainer::create(static::class);
         // find obtainable
         $method = Str::camel($key);
-        $mapped_key = $obtainable->keyIsMapped($key) ? $obtainable->keyMap($key) : $key;
-        $cache_key = $obtainable->filterObtainableKey($mapped_key, $ids);
-        return $obtainable->obtain([$method, $ids, $obtainable_instance ?: static::class], $key, $cache_key, $use_cache);
+        // @todo: this should move to Obtainable.
+        $mapped_key = $obtainable->keyMap($key, $options);
+        $cache_key = $obtainable->filterObtainableKey($mapped_key, $options);
+        // ---
+        // @todo: this call should be simpler.
+        return $obtainable->obtain([$method, $options, $obtainable_instance ?: static::class], $key, $cache_key, $use_cache);
     }
 
     /**
