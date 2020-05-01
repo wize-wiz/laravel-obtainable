@@ -2,23 +2,48 @@
 
 namespace WizeWiz\Obtainable\Concerns;
 
+use Illuminate\Support\Collection;
 use WizeWiz\Obtainable\Obtainer;
 use Illuminate\Support\Str;
 
 trait IsObtainable {
 
+    public static $OBTAINER_INSTANCE;
+
+    /**
+     * Return an obtainer instance.
+     *
+     * @return Obtainer
+     */
+    public static function getObtainer() {
+        return static::$OBTAINER_INSTANCE === null ?
+            (static::$OBTAINER_INSTANCE = Obtainer::create(static::class)) :
+            static::$OBTAINER_INSTANCE;
+    }
+
     /**
      * Obtain data.
      *
      * @param string $key
-     * @param array $options
+     * @param array $args
      * @param bool $use_cache
      * @return \Illuminate\Contracts\Cache\Repository|mixed
      * @throws \Psr\SimpleCache\InvalidArgumentException
      */
-    public function obtain(string $key, array $options = [], $use_cache = true) {
-        $options['id'] = $this->id;
-        return static::obtainable($key, $options, $use_cache, $this);
+    public function obtain(string $key, array $args = [], $use_cache = true) {
+        $args['id'] = $this->id;
+        return static::obtainable($key, $args, $use_cache, $this);
+    }
+
+    /**
+     * Obtain all cached keys related to given $key
+     *
+     * @param string $key
+     * @return Collection
+     */
+    public function obtainKeys(string $key = '') : Collection {
+        $obtainable = static::getObtainer();
+        return $obtainable->obtainKeys($key);
     }
 
     /**
@@ -32,7 +57,7 @@ trait IsObtainable {
      * @throws \Psr\SimpleCache\InvalidArgumentException
      */
     public static function obtainable(string $key, array $options = [], $use_cache = true, $obtainable_instance = null) {
-        $obtainable = Obtainer::create(static::class);
+        $obtainable = static::getObtainer();
         // find obtainable
         $method = Str::camel($key);
         // @todo: this should move to Obtainable.
@@ -44,18 +69,31 @@ trait IsObtainable {
     }
 
     /**
+     * Remove specific keys from cache.
+     *
+     * @param $keys
+     * @param array $args
+     * @return bool|mixed|null
+     * @throws \Exception
+     */
+    public function flushObtained($keys, array $args = []) {
+        $args['id'] = $this->id;
+        return static::flushObtainable($keys, $args);
+    }
+
+    /**
      * Flush obtainable by given keys.
      *
      * @param string|array $key
      * @throws \Exception
      */
-    public static function flushObtainable($keys) {
+    public static function flushObtainable($keys, array $args = []) {
         if(!is_array($keys)) {
             $keys = [$keys];
         }
         // find obtainable
         $obtainable = Obtainer::create(static::class);
-        return $obtainable->flush($keys);
+        return $obtainable->flush($keys, $args);
     }
 
     /**
@@ -65,7 +103,7 @@ trait IsObtainable {
      */
     public static function flushObtainables() {
         // find obtainable
-        $obtainable = Obtainer::create(static::class);
+        $obtainable = static::getObtainer();
         return $obtainable->flushAll();
     }
 
@@ -85,12 +123,4 @@ trait IsObtainable {
         }
     }
 
-    /**
-     * Return an obtainer instance.
-     *
-     * @return Obtainer
-     */
-    public function getObtainer() {
-        return Obtainer::create(static::class);
-    }
 }

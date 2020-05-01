@@ -4,24 +4,33 @@ namespace WizeWiz\Obtainable;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
+use WizeWiz\Obtainable\Exceptions\MissingRequiredMappedArguments;
+use WizeWiz\Obtainable\Exceptions\ObtainableClassNotFound;
+use WizeWiz\Obtainable\Exceptions\UnknownEventMethod;
+use WizeWiz\Obtainable\Exceptions\UnknownObtainableMethod;
 
 abstract class Obtainer {
 
+    const KEY_SEPARATOR = ':';
+
     const OBTAINER_PREFIX = 'obt';
-    const OBTAINER_TAG = 'ww:obt';
+    const OBTAINER_TAG = 'ww'.self::KEY_SEPARATOR.self::OBTAINER_PREFIX;
 
     public static $namespace;
     public static $models;
+
+    public static $enable_class_cache = false;
 
     public $prefix = null;
     public $ttl = 3600;
     public $silent = true;
     public $use_cache = true;
 
-    protected $key_map = [];
-    protected $ttl_map = [];
-    protected $casts = [];
+    public $key_map = [];
+    public $ttl_map = [];
+    public $casts = [];
 
     public function __construct() {
         if(static::$namespace === null) {
@@ -30,12 +39,33 @@ abstract class Obtainer {
     }
 
     /**
+     * Handle events.
+     *
+     * @param $name Name of the event, typically the class.
+     * @param $event Event object (null when listener triggered by wildcard)
+     * @param array $data Data of the event.
+     * @throws UnknownEventMethod
+     * @return mixed
+     */
+    public static function handleEvent($name, $event) {
+        $class = static::class;
+        if(!isset(static::$events[$name])) {
+            throw new UnknownEventMethod($name);
+        }
+        $method = static::$events[$name];
+        return $class::$method($name, $event);
+    }
+
+    /**
      * Initializ static variables.
      */
     protected static function initialize() {
         $config = config('obtainable');
-        static::$models = Str::endsWith($config['models'], '\\') ? str_replace('\\', '', $config['models']) : $config['models'];
-        static::$namespace = Str::endsWith($config['namespace'], '\\') ? str_replace('\\', '', $config['namespace']) : $config['namespace'];
+        foreach(['models', 'namespace'] as $key) {
+            static::${$key} = Str::endsWith($config[$key], '\\') ?
+                str_replace('\\', '', $config[$key]) :
+                $config[$key];
+        }
     }
 
     /**
@@ -44,14 +74,14 @@ abstract class Obtainer {
      * @param $name
      * @param $arguments
      * @return mixed
-     * @throws \Exception
+     * @throws UnknownObtainableMethod
      */
     public function __call($name, $arguments) {
         if(method_exists($this, $name)) {
             $result = call_user_func_array([$this, $name], $arguments);
             return call_user_func_array([$this, 'obtain'], $result);
         }
-        throw new \Exception('Unknown obtainable method ' . $name);
+        throw new UnknownObtainableMethod($name);
     }
 
     /**
@@ -59,25 +89,37 @@ abstract class Obtainer {
      *
      * @param string $class
      * @return Obtainer
+     * @throws ObtainableClassNotFound
      */
     public static function create(string $class) {
         if(static::$namespace === null) {
             static::initialize();
         }
+        $tags = [static::OBTAINER_TAG, static::OBTAINER_TAG.static::KEY_SEPARATOR.'create'];
+        if(static::$enable_class_cache && ($Cache = Cache::tags($tags))->has($class)) {
+            return $Cache->get($class);
+        }
         // find obtainable
         $obt_class = static::$namespace.str_replace(static::$models, '', $class);
         if(!class_exists($obt_class)) {
-            throw new \Exception("obtainable class {$obt_class} could not be found.");
+            throw new ObtainableClassNotFound($obt_class);
+        }
+        $instance = new $obt_class;
+        if(isset($Cache)) {
+            Cache::tags($tags)->put($class, $instance, 3600);
         }
         // create obtainable object, get method, check mapped key and filter key.
-        return new $obt_class;
+        return $instance;
     }
 
     /**
      * Purge all obtainable entries.
      */
     public static function purge() {
-        return Cache::tags(self::OBTAINER_TAG)->flush();
+        return
+            Cache
+                ::tags(self::OBTAINER_TAG)
+                ->flush();
     }
 
     /**
@@ -86,13 +128,29 @@ abstract class Obtainer {
      * @param string $key
      * @return mixed
      */
-    public function flush(array $keys) {
+    public function flush(array $keys, array $args = []) {
         if(empty($keys)) {
             return $this->flushAll();
         }
         $results = [];
-        foreach($keys as $key) {
-            $results[] = Cache::tags($this->getTag($key))->flush();
+        // if we have arguments, only delete specific keys.
+        if(!empty($args)) {
+            foreach ($keys as $key) {
+                $results[] =
+                    Cache
+                        ::tags($this->getTags($key))
+                        ->delete($this->keyMap($key, $args));
+            }
+        }
+        // if we have no arguments, delete all entries belonging to the key's tag.
+        else {
+            foreach($keys as $key) {
+                // remove everything related to the key.
+                $results[] =
+                    Cache
+                        ::tags($this->getTag($key))
+                        ->flush();
+            }
         }
         return array_sum($results) === count($keys);
     }
@@ -103,7 +161,10 @@ abstract class Obtainer {
      * @return bool
      */
     public function flushAll() {
-        return Cache::tags($this->getTagPrefix())->flush();
+        return
+            Cache
+                ::tags($this->getTagPrefix())
+                ->flush();
     }
 
     /**
@@ -132,11 +193,29 @@ abstract class Obtainer {
         }
         $Cache = Cache::tags($this->getTags($key));
         if($Cache->has($cache_key)) {
+            Log::info($cache_key . 'from-cache');
             return $this->processResults($key, $Cache->get($cache_key));
         }
+        Log::info($cache_key . ' new-cache');
         $result = $this->executeCallable($callable);
         $Cache->put($cache_key, $result, $this->getTtl($key));
         return $this->processResults($key, $result);
+    }
+
+    /**
+     * Obtain all keys related to model and/or key.
+     *
+     * @param string $keys
+     */
+    public function obtainKeys(string $key = '') {
+        $results = [];
+        if(empty($key)) {
+            // return all keys related to the model.
+
+        }
+//        $results = Cache()
+
+        return collect($results);
     }
 
     /**
@@ -145,7 +224,7 @@ abstract class Obtainer {
      * @return string
      */
     protected function getTagPrefix() {
-        return static::OBTAINER_PREFIX.":{$this->prefix}";
+        return static::OBTAINER_PREFIX . static::KEY_SEPARATOR . $this->prefix;
     }
 
     /**
@@ -160,7 +239,7 @@ abstract class Obtainer {
             // global obtainer tag
             static::OBTAINER_TAG,
             // obtainer specific tag
-            "{$prefix}",
+            $prefix,
             // key specific tag
             $this->getTag($key, $prefix)
         ];
@@ -173,7 +252,7 @@ abstract class Obtainer {
      * @return string
      */
     public function getTag($key, $prefix = null) {
-        return ($prefix ?: $this->getTagPrefix()) . ":{$key}";
+        return ($prefix ?: $this->getTagPrefix()) . static::KEY_SEPARATOR . $key;
     }
 
     /**
@@ -232,15 +311,15 @@ abstract class Obtainer {
      * Filter obtainable key to generated the possible cached key.
      *
      * @param string $key
-     * @param array $options
+     * @param array $args
      * @return string
      */
-    public function filterObtainableKey(string $key, array $options = []) {
-        $options_keys = array_keys($options);
-        array_walk_recursive($options_keys, function(&$item) {
+    public function filterObtainableKey(string $key, array $args = []) {
+        $args_keys = array_keys($args);
+        array_walk_recursive($args_keys, function(&$item) {
             $item = "\${$item}";
         });
-        return strtr($key, array_combine($options_keys, $options));
+        return strtr($key, array_combine($args_keys, $args));
     }
 
     /**
@@ -259,12 +338,186 @@ abstract class Obtainer {
      * @param $key
      * @return string
      */
-    public function keyMap($key, array $args) : string {
-        $prefix = (!empty($this->prefix) ? ($this->prefix . ':') : '');
-        $mapped_key = $this->keyIsMapped($key) ?
-            $this->key_map($key) :
-            $key;
-        return $prefix . $mapped_key;
+    public function keyMap($key, array $args = []) : string {
+        $prefix = (!empty($this->prefix) ? ($this->prefix . static::KEY_SEPARATOR) : '');
+        $id = '';
+        if(isset($args['id'])) {
+            $id = $args['id'].static::KEY_SEPARATOR;
+            unset($args['id']);
+        }
+        // do we have a mapped key?
+        if($this->keyIsMapped($key)) {
+            $key = $this->key_map[$key];
+        }
+
+        // we need to replace arg keys with values.
+        if(strpos($key, '$', 0)) {
+            $matches = [];
+            $found = preg_match_all('/\$(.*?):/s', $key.static::KEY_SEPARATOR, $matches);
+            if($found) {
+                $_matches = array_fill_keys($matches[1], null);
+                if(!empty(($missing_args = array_diff_key($_matches, $args)))) {
+                    throw new MissingRequiredMappedArguments(implode(',', array_keys($missing_args)));
+                }
+                $key = $this->filterObtainableKey($key, array_intersect_key($args, $_matches));
+                $args = array_diff_key($args, $_matches);
+            }
+        }
+        // add everything else not replaced in the key.
+        if(count($args) > 0) {
+            // we'll sort keys ascending so keys always generate the same.
+            ksort($args);
+            $concated_keys = http_build_query($args, null, static::KEY_SEPARATOR);
+            return $prefix . $id . $key . static::KEY_SEPARATOR . $concated_keys;
+        }
+
+        return $prefix . $id . $key;
+    }
+
+    /**
+     * Reverse the cache key into a solid obtainable key + arguments. In some minor cases, this might fail.
+     *
+     * @todo: try to refactor.
+     * @param $cache_key
+     */
+    public function reverseKeyMap(string $cache_key) {
+        $args = [];
+        $options = [];
+        $parts = explode(static::KEY_SEPARATOR, $cache_key);
+        $parts_count = count($parts);
+        // check integrity, there should always be a prefix and key present.
+        if($parts_count < 2) {
+            throw new \Exception('Invalid obtainable cache key.');
+        }
+        // check prefix.
+        if(!$parts[0] === $this->prefix) {
+            throw new \Exception("Prefix {$parts[0]} does not match {$this->prefix}");
+        }
+
+        // we can remove the prefix
+        unset($parts[0]);
+        $parts_count -= 1;
+
+        $fn_find_key = function($partial) {
+            foreach($this->key_map as $key => $mapped_key) {
+                if($partial === $mapped_key) {
+                    return [$key, $mapped_key];
+                }
+                if(Str::startsWith($mapped_key, $partial.Obtainer::KEY_SEPARATOR)) {
+                    return [$key, $mapped_key];
+                }
+            }
+            return false;
+        };
+        $fn_find_args = function(array $parts) {
+            $args = [];
+            foreach($parts as $part) {
+                if(strpos($part, '=', 0) !== false) {
+                    $e = explode('=', $part);
+                    $args[$e[0]] = $e[1];
+                }
+            }
+            return $args;
+        };
+
+
+        switch($parts_count) {
+            // only `mapped key` remains
+            // no arguments
+            // no parameters
+            case 1:
+                $found = $fn_find_key($parts[1]);
+                if($found === false) {
+                    // could not reverse key
+                    return false;
+                }
+                return [
+                    $found[0],
+                    [],
+                    $found[1],
+                    $cache_key
+                ];
+                break;
+            // `mapped key` could be [1] or [2]
+            // index [1] could be `id`
+            // if index [1] is key, figure out what [2] is.
+            case 2:
+            default:
+                $original_key = null;
+                $args = [];
+                $results = [];
+                // mostly likely, [2] is the key and [1] is a numeric id.
+                if(($found = $fn_find_key($parts[2])) !== false) {
+                    $args = ['id' => $parts[1]];
+                    $original_key = $found[0];
+                    $mapped_key = $this->key_map[$original_key];
+                    unset($parts[1]);
+                    unset($parts[2]);
+
+                    if(count($parts) === 0) {
+                        return [
+                            $original_key,
+                            $args,
+                            $mapped_key,
+                            $cache_key
+                        ];
+                    }
+                }
+                // [1] is the key and part 2 is probably additional data.
+                elseif(($found = $fn_find_key($parts[1])) !== false) {
+                    unset($parts[1]);
+                    $original_key = $found[0];
+                    $args = $fn_find_args($parts);
+                    $mapped_key = $this->key_map[$original_key];
+                }
+
+                // check if $cache_key has required parameters.
+                if(($first_pos = strpos($mapped_key, '$', 0)) !== false) {
+                    $e = explode(static::KEY_SEPARATOR, $mapped_key);
+                    if($first_pos > 0) {
+                        array_shift($e);
+                    }
+
+                    foreach($e as $argument) {
+                        if(strpos($argument, '=', 0) !== false) {
+                            $remaining_arg = explode('=', $argument);
+                            $args[$remaining_arg[0]] = $remaining_arg[1];
+                            continue;
+                        }
+
+                        if(strpos($argument, '$', 0) === 0) {
+                            $args[str_replace('$', '', $argument)] = current($parts);
+                            unset($parts[key($parts)]);
+                            continue;
+                        }
+
+                        unset($parts[key($parts)]);
+                    }
+                }
+
+                if(count($parts) > 0) {
+                    foreach($parts as $part) {
+                        if(strpos($part, '=', 0) !== false) {
+                            $e = explode('=', $part);
+                            $args[$e[0]] = $e[1];
+                            unset($parts[key($parts)]);
+                            continue;
+                        }
+                    }
+                }
+
+                return [
+                    $original_key,
+                    $args,
+                    $mapped_key,
+                    $cache_key
+                ];
+
+                break;
+        }
+
+        // unable to reverse key.
+        return false;
     }
 
     /**

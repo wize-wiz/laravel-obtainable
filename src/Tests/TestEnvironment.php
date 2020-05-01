@@ -11,7 +11,7 @@ trait TestEnvironment {
 
     protected function getEnvironmentSetUp($app) {
         $this->loadLogging($app);
-        $this->loadCache($app);
+        $this->loadConfig($app);
         $this->log('Environment setup complete.');
     }
 
@@ -31,8 +31,17 @@ trait TestEnvironment {
         return ['WizeWiz\Obtainable\ObtainableServiceProvider'];
     }
     
-    protected function loadCache($app) {
-        $app['config']->set('cache.default', 'array');
+    protected function loadConfig($app) {
+        $app['config']->set('cache.default', 'redis');
+        $app['config']->set('obtainable', [
+            'namespace' => 'WizeWiz\Obtainable\Tests\Obtainables',
+            'models' => 'WizeWiz\Obtainable\Tests\Models',
+            'wildcards' => [
+                'WizeWiz\Obtainable\Tests\Events\*' => [
+                    'WizeWiz\Obtainable\Tests\Models\TestModel'
+                ]
+            ]
+        ]);
     }
     
     protected function loadLogging(Application $app) {
