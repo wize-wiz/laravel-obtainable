@@ -4,7 +4,6 @@ namespace WizeWiz\Obtainable;
 
 use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Carbon;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Str;
 use WizeWiz\Obtainable\Exceptions\MissingRequiredMappedArguments;
 use WizeWiz\Obtainable\Exceptions\ObtainableClassNotFound;
@@ -123,6 +122,18 @@ abstract class Obtainer {
     }
 
     /**
+     * Flush all obtainables.
+     *
+     * @return bool
+     */
+    public function flushAll() {
+        return
+            Cache
+                ::tags($this->getTagPrefix())
+                ->flush();
+    }
+
+    /**
      * Flush key.
      *
      * @param string $key
@@ -156,18 +167,6 @@ abstract class Obtainer {
     }
 
     /**
-     * Flush all obtainables.
-     *
-     * @return bool
-     */
-    public function flushAll() {
-        return
-            Cache
-                ::tags($this->getTagPrefix())
-                ->flush();
-    }
-
-    /**
      * Use cache.
      * @param bool $use_cache
      * @return $this
@@ -193,10 +192,8 @@ abstract class Obtainer {
         }
         $Cache = Cache::tags($this->getTags($key));
         if($Cache->has($cache_key)) {
-            Log::info($cache_key . 'from-cache');
             return $this->processResults($key, $Cache->get($cache_key));
         }
-        Log::info($cache_key . ' new-cache');
         $result = $this->executeCallable($callable);
         $Cache->put($cache_key, $result, $this->getTtl($key));
         return $this->processResults($key, $result);
@@ -377,7 +374,7 @@ abstract class Obtainer {
     /**
      * Reverse the cache key into a solid obtainable key + arguments. In some minor cases, this might fail.
      *
-     * @todo: try to refactor.
+     * @note: only for testing.
      * @param $cache_key
      */
     public function reverseKeyMap(string $cache_key) {
