@@ -7,7 +7,6 @@ use Illuminate\Support\Carbon;
 use Illuminate\Support\Str;
 use WizeWiz\Obtainable\Exceptions\MissingRequiredMappedArguments;
 use WizeWiz\Obtainable\Exceptions\ObtainableClassNotFound;
-use WizeWiz\Obtainable\Exceptions\UnknownEventMethod;
 use WizeWiz\Obtainable\Exceptions\UnknownObtainableMethod;
 
 abstract class Obtainer {
@@ -31,29 +30,7 @@ abstract class Obtainer {
     public $ttl_map = [];
     public $casts = [];
 
-    public function __construct() {
-        if(static::$namespace === null) {
-            static::initialize();
-        }
-    }
-
-    /**
-     * Handle events.
-     *
-     * @param $name Name of the event, typically the class.
-     * @param $event Event object (null when listener triggered by wildcard)
-     * @param array $data Data of the event.
-     * @throws UnknownEventMethod
-     * @return mixed
-     */
-    public static function handleEvent($name, $event) {
-        $class = static::class;
-        if(!isset(static::$events[$name])) {
-            throw new UnknownEventMethod($name);
-        }
-        $method = static::$events[$name];
-        return $class::$method($name, $event);
-    }
+    protected $listeners = [];
 
     /**
      * Initializ static variables.
@@ -139,9 +116,12 @@ abstract class Obtainer {
      * @param string $key
      * @return mixed
      */
-    public function flush(array $keys, array $args = []) {
+    public function flush($keys, array $args = []) {
         if(empty($keys)) {
             return $this->flushAll();
+        }
+        if(!is_array($keys)) {
+            $keys = [$keys];
         }
         $results = [];
         // if we have arguments, only delete specific keys.
@@ -201,14 +181,13 @@ abstract class Obtainer {
 
     /**
      * Obtain all keys related to model and/or key.
-     *
+     * @todo: implement.
      * @param string $keys
      */
     public function obtainKeys(string $key = '') {
         $results = [];
         if(empty($key)) {
             // return all keys related to the model.
-
         }
 //        $results = Cache()
 

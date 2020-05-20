@@ -13,37 +13,23 @@ class ObtainableServiceProvider extends ServiceProvider {
         $this->mergeConfigFrom(
             __DIR__.'/config/obtainable.php', 'obtainable'
         );
+        $this->subscribers();
     }
 
     public function boot() {
-        $this->events();
-
         $this->publishes([
             __DIR__.DIRECTORY_SEPARATOR.'config'.DIRECTORY_SEPARATOR.'obtainable.php' => config_path('obtainable.php'),
         ]);
     }
 
     /**
-     * @todo: cache this procedure to speed up things.
+     * Register the listeners for the subscriber.
      */
-    public function events() {
-        $events = config('obtainable.events', []);
-        foreach($events as $event_name => $listener) {
-            $method = 'on'.last(explode('\\', $event_name));
-            Event::listen($event_name, function($event) use($listener, $method, $event_name) {
-                $listener::$method($event_name, $event);
-            });
-        }
-
-        foreach(config('obtainable.wildcards', []) as $event_name => $listeners) {
-            Event::listen($event_name, function($event, $data) use($listeners) {
-                foreach($listeners as $listener) {
-                    if(isset($listener::$events[$event])) {
-                        // @note: wildcard does not have the event object.
-                        $listener::handleEvent($event, isset($data[0]) ? $data[0] : $data);
-                    }
-                }
-            });
+    public function subscribers() {
+        $subscribers = config('obtainable.subscribers', []);
+        foreach($subscribers as $subscriber) {
+            Event::subscribe($subscriber);
         }
     }
+
 }
