@@ -22,17 +22,27 @@ trait IsObtainable {
     }
 
     /**
+     * Return obtainer object.
+     * @todo: possibility to use $model->obtain->allMessages() instead of obtain('all-messages'). Only condition is that
+     *          all obtainable methods need to be protected in order for the magic __call to intercept the method calls.
+     * @return Obtainer
+     */
+    public function getObtainAttribute() {
+        return static::getObtainer();
+    }
+
+    /**
      * Obtain data.
      *
      * @param string $key
-     * @param array $args
+     * @param array $options
      * @param bool $use_cache
      * @return \Illuminate\Contracts\Cache\Repository|mixed
      * @throws \Psr\SimpleCache\InvalidArgumentException
      */
-    public function obtain(string $key, array $args = [], $use_cache = true) {
-        $args['id'] = $this->id;
-        return static::obtainable($key, $args, $use_cache, $this);
+    public function obtain(string $key, array $options = [], $use_cache = true) {
+        $options['id'] = $this->id;
+        return static::obtainable($key, $options, $use_cache, $this);
     }
 
     /**
@@ -58,14 +68,12 @@ trait IsObtainable {
      */
     public static function obtainable(string $key, array $options = [], $use_cache = true, $obtainable_instance = null) {
         $obtainable = static::getObtainer();
-        // find obtainable
-        $method = Str::camel($key);
-        // @todo: this should move to Obtainable.
-        $mapped_key = $obtainable->keyMap($key, $options);
-        $cache_key = $obtainable->filterObtainableKey($mapped_key, $options);
-        // ---
-        // @todo: this call should be simpler.
-        return $obtainable->obtain([$method, $options, $obtainable_instance ?: static::class], $key, $cache_key, $use_cache);
+        list($mapped_key, $cache_key) = $obtainable->guessKeys($key, $options);
+
+        if( ($Cache = cache()->tags($obtainable->getTags($key)))->has($cache_key) ) {
+            return $Cache->get($cache_key);
+        }
+        return $obtainable->obtain([$key, $options, $obtainable_instance ?: static::class], $key, $cache_key, $use_cache);
     }
 
     /**

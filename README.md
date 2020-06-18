@@ -2,7 +2,7 @@
 
 #### Status
 
-v0.3 (2020-28-04) - in-development
+v0.4 (2020-05-26) - in-development
 
 <br />
 
@@ -10,11 +10,13 @@ v0.3 (2020-28-04) - in-development
 
 **This package is "work in progress". Nothing in this repository is production ready!**
 
-I needed a simpler solution to manage cached content retrieved by Eloquent models. The relentless use of the `remember` method from the facade `Cache::remember` increased the chance of unnecessary duplication of code using callbacks.
+I needed a simple solution to manage cached content retrieved by Eloquent models. The relentless use of the `remember` method from the facade `Cache::remember` increased code duplication 
+
+### Use Case
 
 ```php
-$Chat = Chat::find(528); // some random ids.
-$User = User::find(12);
+$Chat = Chat::find(528); // some random chat.
+$User = User::find(12); // some random user
 Cache::remember("chat:{$Chat->id}:unread-messages:{$User->id}", 60*60, function() use ($Chat, $User) {
     return $Chat->messages()->whereUserId($User->id)->whereIsNull('unread')->count();
 });
@@ -23,10 +25,11 @@ Cache::remember("chat:{$Chat->id}:unread-messages:{$User->id}", 60*60, function(
 This package tries to reduce the overhead in a simpler manner without the need to duplicate it anywhere else, or keep track of the cached content and remove it from the cache somewhere completely else.
 
 ```php
-Chat::find(528)->obtain('unread-messages-count', ['user' => $User->id]);
-````
+$Chat = Chat::find(528);
+$Chat->obtain('unread-messages-count', ['user' => $User->id]);
+```
 
-The removal of cached data could be just be as complex if we need to remove the cached data if a new message was sent in the chat.
+The removal of cached data could be just be as complex if we need to remove the cached data if a new message was sent to the chat.
 
 ```php
 $Chat = Chat::find(528);
@@ -36,19 +39,52 @@ foreach($users as $User) {
 }
 ```
 
-Removing with an obtainable class is as simple as:
+This packages tries to simplify all of these different steps by using an obtainable object and centralizes all required code in a single class per model.
 
 ```php
 $Chat = Chat::find(528);
-// will remove all count for all users with chat id 528.
+// will remove all counts for all users with chat id 528.
 $Chat->flushObtained('unread-messages-count');
-// will only remove for user with id 12.
+// will only be removed for user with id 12.
 $Chat->flushObtained('unread-messages-count', ['user' => 12]);
-// will only remove for user id 12, all unread messages count for all chats. 
+// will remove all unread messages count for all chats, but only for user with id 12.
 Chat::flushObtainables('unread-messages-count', ['user' => 12]);
 ```
 
-It also possible to react on events, for example on a `NewMessage` event where we would like to clear anything cached previously. Read more about it
+It also possible to use the obtainable class as a listener, for example, to react on a `NewMessage` event where we would like to clear anything cached previously.
+
+```php
+
+use WizeWiz\Obtainable\Obtainer;
+use App\Events\Chat\NewMessage;
+
+class Obtainable extends Obtainer {
+
+	// ...
+	
+	/**
+	 * Subscribe to listeners.
+	 */
+	public function subscribe($events) {
+		$events->listen(NewMessage::class, static::class . '@onNewMessage');
+	}
+
+	/**
+	 * On new message event.
+	 */
+	public function onNewMessage($event) {
+		$this->flush('unread-messages-count');
+		$this->flush('messages');
+	}
+		
+	// ...
+}
+
+```
+
+Now triggering the event with `event(new NewMessage($message))` automatically flushes the caches `unread-messages-count` and `messages` for the given chat the event was triggered by.
+
+<i>All code is psuedo code and only demonstrates a possible use case.</i>
 
 <br />
 
@@ -65,43 +101,43 @@ This package supports auto-discovery, after installation run `php artisan packag
 The configuration file has a `namespace` setting, where all obtainable classes are located. The default namespace for all the Eloquent models in Laravel is `App`. If your project deviates from Laravels default, change the `models` namespace accordingly.
 
 ```php
+return [
     /*
     |--------------------------------------------------------------------------
     | Obtainable namespace
     |--------------------------------------------------------------------------
-    |
-    | This option controls the default namespace for any obtainable class. The
-    | default namespace `App\Obtainables` equals the directory `app\Obtainables`.
-    |
     */
     
-    'namespace' => 'App\\Obtainables'
+    'namespace' => 'App\\Obtainables',
     
     
     /*
-    |--------------------------------------------------------------------------
     | Model namespace
     |--------------------------------------------------------------------------
-    |
-    | By default, Laravels models uses the `App` namespace for all models. If
-    | your project deviates from this setup, change the models namespace 
-    | accordingly.
-    |
     */
     
-    'models' => 'App'
+    'models' => 'App',
+    
+    /*
+    |--------------------------------------------------------------------------
+    | Subscribers
+    |--------------------------------------------------------------------------
+    */
+
+    'subcribers' => [],
+];
+    
     
 ```
 
 Each obtainable class will reflect the namespace of its model. So for example, if the `User` model would be located under `App\Models`, change the `'models'` setting to `App\Models`. The obtainable class for `User` would then be located under `App\Obtainables\User`.
 
-If a model has namespace of, e.g. `App\Models\Chat\Message`, then the obtainable class for `Message` would be located under `App\Obtainables\Chat\Message`. This is done automatically by the Obtainer class.
-
+If a model has a namespace of, e.g. `App\Models\Chat\Message`, then the obtainable class for `Message` would be located under `App\Obtainables\Chat\Message`.
 <br />
 
 ### Usage
 
-Implement the obtainable concern and contract, in this example, the `User` model.
+Implement the interface (contract) `Contracts\Obtainable` and the trait (concern) `Concern\IsObtainable` for the model you wish to use the obtainble methods. In the following examples I will use an `Chat` example model.
 
 ```php
 namespace App\Models;
@@ -110,70 +146,99 @@ use use Illuminate\Database\Eloquent\Model;
 use WizeWiz\Obtainable\Contracts\Obtainable;
 use WizeWiz\Obtainable\Concerns\IsObtainable;
 
-class User extends Model implements Obtainable {
+class Chat extends Model implements Obtainable {
     use IsObtainable;
 
-    ...
+    // ...
+
+	public function users() {
+		// .. returns a hasMany users relationship.
+	}
+	
+	public function messages() {
+		// .. returns a hasMany messages relationship.
+	}
+
+	// ...
 
 }
 ```
 
-Create an obtainable class for the model `User`. Obtainable class name should be the class name of the given model. Each method declared in the obtainable class should return a closure. Each closure has a parameter called `options` where any relevant arguments can be passed to be used in the closure. By default, the models `id` is automatically added.
+Create an obtainable class for the model `Chat`. 
+
+```bash
+php artisan obtainable:make Chat
+```
+
+The obtainable class name should be the class name of the given model. Each method declared in the obtainable class should return a closure. Each closure has a parameter called `options` where any relevant argument can be passed to be used in the 
+
+> By default, the models `id` is automatically added.
 
 ```php
 namespace App\Obtainables;
 
 use WizeWiz\Obtainable\Obtainer;
 
-// Obtainer class for model User.
+// Obtainer example class for model Chat.
 class Chat extends Obtainer {
 
+    /**
+     * Return all users in chat.
+     */
     public function allUsers() {
         return function(array $options) {
             // function is automatically bound to the Chat model.
             return $this->users->only(['id', 'name']);
         };
     }
-
-	/**
-	 * Return all unread messages.
-	 */
+    
+    /**
+     *
+     */
+    public function allMessages() {
+    	return function(array $options) {
+    		return $this->messages;
+    	};
+    }
+    
+    /**
+     * Return all unread messages.
+     */
     public function unreadMessages() {
         return function($options) {
-            return $this->unread_messages;
+            return $this->messages()->where('read', false)->get();
         };
     }
 
-	/**
-	 * Return the cound of all unread messages.
-	 */
+    /**
+     * Return the count of all unread messages.
+     */
     public function unreadMessagesCount() {
         return function($options) {
-            return $this->unread_messages->count();
+            return $this->messages()->where('read', false')->count();
         };
     }
 
 }
 ```
 
-To retrieve the results from any obtainable method, you call the methods in kebab style. 
+To retrieve the results from any obtainable method, you call the methods in kebab style. This means `unreadMessages` becomes `unread-messages`, `allMessages` becomes `all-messages` and so on. To verify each method for its kebab counter part, just use `Str::kebab('allMessages');`.
+
 
 ```php
-// (statically called) get all users
-Users::obtainable('unread-messages');
+$Chat = Chat::find(528);
 
-// get unread messages count from specific user.
-$User = User::find(1);
-$User->obtain('unread-Messages-count')
-// or get all messages for this user.
-$User->obtain('unread-messages').
+// get all users 
+$Chat->obtain('all-users');
+
+// get all messages
+$Chat->obtain('all-messages');
 ```
 
 If the closure requires additional data, just append any data as an `array` to the `obtain` method:
 
 ```php
-// get all unread chat messages for chat id 582.
-$User->obtain('unread-chat-messages', ['chat' => 582]).
+$Chat
 ```
 
 Where the obtainable method for `unread-chat-messages` could look like:

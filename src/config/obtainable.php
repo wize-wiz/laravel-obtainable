@@ -25,6 +25,18 @@ return [
     |
     */
 
-    'models' => 'App'
+    'models' => 'App',
+
+    /*
+    |--------------------------------------------------------------------------
+    | Subscribers
+    |--------------------------------------------------------------------------
+    |
+    | Register listeners for the Obtainble subscriber, these should be the full
+    | class path.
+    |
+    */
+
+    'subcribers' => []
 
 ];

@@ -61,6 +61,21 @@ abstract class Obtainer {
     }
 
     /**
+     * Gues the key
+     *
+     * @param $key
+     * @return array
+     */
+    public function guessKeys($key, array $options) : array {
+        $mapped_key = $this->keyMap($key, $options);
+        $cache_key = $this->filterObtainableKey($mapped_key, $options);
+        return [
+            $mapped_key,
+            $cache_key
+        ];
+    }
+
+    /**
      * Create a obtainable instance given by class (model).
      *
      * @param string $class
@@ -272,7 +287,9 @@ abstract class Obtainer {
      * @throws \Exception
      */
     protected function executeCallable(array $callable) {
-        list($method, $args, $instance) = $callable;
+        list($key, $args, $instance) = $callable;
+        // get the method name
+        $method = Str::camel($key);
         $closure = $this->{$method}();
         if(is_callable($closure)) {
             if(is_object($instance)) {
@@ -331,17 +348,23 @@ abstract class Obtainer {
             $matches = [];
             $found = preg_match_all('/\$(.*?):/s', $key.static::KEY_SEPARATOR, $matches);
             if($found) {
+                // here we replace all `$` variables with actual values.
+                // the key value should match the appending `$`, e.g. `:$user` should have a key `['user' => 1']`.
                 $_matches = array_fill_keys($matches[1], null);
                 if(!empty(($missing_args = array_diff_key($_matches, $args)))) {
+                    // if no key was found, we can assume a required argument is missing.
                     throw new MissingRequiredMappedArguments(implode(',', array_keys($missing_args)));
                 }
+                // regenerate the key
                 $key = $this->filterObtainableKey($key, array_intersect_key($args, $_matches));
+                // and filter out possible remaining optional arguments, e.g. `:limit=10`, etc.
                 $args = array_diff_key($args, $_matches);
             }
         }
         // add everything else not replaced in the key.
         if(count($args) > 0) {
-            // we'll sort keys ascending so keys always generate the same.
+            // we'll sort variable array keys ascending so keys always generate the same, e.g. if an input was given
+            // like `[g => 1, c => 'example', a => 10]`, the key always generates to `:a=10:c=example:g=1`
             ksort($args);
             $concated_keys = http_build_query($args, null, static::KEY_SEPARATOR);
             return $prefix . $id . $key . static::KEY_SEPARATOR . $concated_keys;
@@ -351,7 +374,7 @@ abstract class Obtainer {
     }
 
     /**
-     * Reverse the cache key into a solid obtainable key + arguments. In some minor cases, this might fail.
+     * Reverse the cache key into a solid obtainable key + arguments. In some explicit minor cases, this might fail.
      *
      * @note: only for testing.
      * @param $cache_key
@@ -395,7 +418,6 @@ abstract class Obtainer {
             }
             return $args;
         };
-
 
         switch($parts_count) {
             // only `mapped key` remains
